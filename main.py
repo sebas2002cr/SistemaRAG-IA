@@ -2,6 +2,9 @@ import streamlit as st
 import os
 import time
 from datetime import datetime
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+from rouge import Rouge
 
 # userprompt
 from langchain.prompts import PromptTemplate
@@ -85,6 +88,57 @@ if 'log_file' not in st.session_state:
 def log_message(message):
     with open(st.session_state.log_file, 'a') as log_file:
         log_file.write(message + "\n")
+
+def count_ngrams(sequence, n):
+    return {tuple(sequence[i:i+n]): sequence[i:i+n].count(tuple(sequence[i:i+n])) for i in range(len(sequence)-n+1)}
+
+def modified_precision(references, hypothesis, n):
+    counts = count_ngrams(hypothesis, n)
+    if not counts:
+        return 0
+    max_counts = {}
+    for reference in references:
+        reference_counts = count_ngrams(reference, n)
+        for ngram in counts:
+            if ngram in max_counts:
+                max_counts[ngram] = max(max_counts[ngram], reference_counts.get(ngram, 0))
+            else:
+                max_counts[ngram] = reference_counts.get(ngram, 0)
+    clipped_counts = {ngram: min(count, max_counts.get(ngram, 0)) for ngram, count in counts.items()}
+    total_counts = sum(counts.values())
+    if total_counts == 0:
+        return 0
+    return sum(clipped_counts.values()) / total_counts
+
+def brevity_penalty(reference, hypothesis):
+    ref_len = len(reference)
+    hyp_len = len(hypothesis)
+    if hyp_len > ref_len:
+        return 1
+    if hyp_len == 0:
+        return 0
+    return hyp_len / ref_len
+
+def calculate_bleu(reference, candidate):
+    reference = reference.split()
+    candidate = candidate.split()
+    p1 = modified_precision([reference], candidate, 1)
+    p2 = modified_precision([reference], candidate, 2)
+    p3 = modified_precision([reference], candidate, 3)
+    p4 = modified_precision([reference], candidate, 4)
+    bp = brevity_penalty(reference, candidate)
+    return bp * (p1 * p2 * p3 * p4) ** 0.25
+
+def calculate_rouge(reference, candidate):
+    rouge = Rouge()
+    scores = rouge.get_scores(candidate, reference)
+    return scores
+
+def calculate_cosine_similarity(reference, candidate):
+    vectorizer = TfidfVectorizer().fit_transform([reference, candidate])
+    vectors = vectorizer.toarray()
+    cosine_sim = cosine_similarity(vectors)
+    return cosine_sim[0, 1]
 
 st.title("Chatbot - IA - Llama3 RAG - TEC")
 
@@ -173,6 +227,15 @@ else:
 
         chatbot_message = {"role": "assistant", "message": response['result']}
         st.session_state.chat_history.append(chatbot_message)
+
+        # Calcular métricas
+        bleu_score = calculate_bleu(user_input, response['result'])
+        rouge_score = calculate_rouge(user_input, response['result'])
+        cosine_sim = calculate_cosine_similarity(user_input, response['result'])
+        
+        st.write(f"BLEU Score: {bleu_score:.2f}")
+        st.write(f"ROUGE Score: {rouge_score}")
+        st.write(f"Cosine Similarity: {cosine_sim:.2f}")
 
 # Cerrar el archivo de log al finalizar la sesión
 def close_log():
