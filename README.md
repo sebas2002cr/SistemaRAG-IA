@@ -8,6 +8,6 @@
 
 # Librerias
 
-pip3 install stremlit
+pip3 install streamlit
 pip3 install langchain
 pip3 install pypdf
